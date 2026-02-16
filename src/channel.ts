@@ -66,13 +66,15 @@ export function createARPChannel(api: any) {
         const account = ctx.account;
         const accountId = account.accountId ?? 'default';
 
+        logger.info(`[arp] startAccount called for ${accountId}, gateways.size=${gateways.size}`);
+
         if (!account.enabled) {
-          ctx.log?.info(`[arp] Account ${accountId} not enabled, skipping`);
+          logger.info(`[arp] Account ${accountId} not enabled, skipping`);
           return;
         }
 
         if (gateways.has(accountId)) {
-          ctx.log?.warn(`[arp] Gateway already running for ${accountId}`);
+          logger.warn(`[arp] Gateway already running for ${accountId}, skipping duplicate start`);
           return;
         }
 
@@ -209,7 +211,14 @@ async function handleARPInbound(params: {
   log: any;
 }): Promise<void> {
   const { context, message, account, config, log } = params;
-  const core = getARPRuntime();
+  
+  let core;
+  try {
+    core = getARPRuntime();
+  } catch (err) {
+    log?.error(`[arp] Runtime not initialized, cannot process message: ${err}`);
+    return;
+  }
 
   const channelId = message.channelId!;
   const senderId = context.metadata.senderId ?? 'arp-system';

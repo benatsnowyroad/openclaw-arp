@@ -48,7 +48,8 @@ export class ARPGateway {
       });
 
       this.ws.on('close', (code, reason) => {
-        this.logger.warn(`[arp] Connection closed: ${code} ${reason}`);
+        const reasonStr = reason ? reason.toString() : 'no reason';
+        this.logger.warn(`[arp] Connection closed: code=${code} reason=${reasonStr}`);
         this.state.connected = false;
         this.stopHeartbeat();
         this.scheduleReconnect();
