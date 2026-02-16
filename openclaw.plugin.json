@@ -1,0 +1,36 @@
+{
+  "id": "arp",
+  "name": "@openclaw/arp",
+  "description": "Agent Relay Protocol channel plugin for OpenClaw",
+  "version": "0.1.0",
+  "entry": "./src/index.ts",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "relayUrl": {
+        "type": "string",
+        "description": "WebSocket URL for ARP relay"
+      },
+      "token": {
+        "type": "string",
+        "description": "Agent authentication token"
+      },
+      "agentId": {
+        "type": "string",
+        "description": "Agent identifier in ARP"
+      },
+      "channels": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "ARP channel IDs to subscribe to"
+      }
+    },
+    "required": ["relayUrl", "token", "agentId"]
+  },
+  "uiHints": {
+    "relayUrl": { "label": "Relay URL", "placeholder": "wss://arp-relay.example" },
+    "token": { "label": "Agent Token", "sensitive": true },
+    "agentId": { "label": "Agent ID", "placeholder": "computer_bot" },
+    "channels": { "label": "Channel IDs" }
+  }
+}
