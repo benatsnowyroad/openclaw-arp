@@ -4,19 +4,19 @@ import type { ARPAccount, ARPMessage } from './types.js';
 import { ARPGateway } from './gateway.js';
 import { processInbound } from './inbound.js';
 import { sendToARP } from './outbound.js';
+import { getARPRuntime } from './runtime.js';
+
+const CHANNEL_ID = 'arp' as const;
 
 // Store active gateways per account
 const gateways = new Map<string, ARPGateway>();
-
-// Store pending responses (channelId:flowId -> response callback)
-const pendingResponses = new Map<string, (content: string) => void>();
 
 export function createARPChannel(api: any) {
   const logger = api.logger;
 
   const channel = {
     id: 'arp',
-    
+
     meta: {
       id: 'arp',
       label: 'Agent Relay Protocol',
@@ -43,13 +43,13 @@ export function createARPChannel(api: any) {
       listAccountIds: (cfg: any) => {
         return Object.keys(cfg.channels?.arp?.accounts ?? {});
       },
-      
+
       resolveAccount: (cfg: any, accountId?: string): ARPAccount | undefined => {
         const accounts = cfg.channels?.arp?.accounts ?? {};
         const id = accountId ?? 'default';
         const account = accounts[id];
         if (!account) return undefined;
-        
+
         return {
           accountId: id,
           relayUrl: account.relayUrl,
@@ -62,11 +62,10 @@ export function createARPChannel(api: any) {
     },
 
     gateway: {
-      // Use startAccount/stopAccount pattern (matches Telegram/Slack)
       startAccount: async (ctx: any) => {
         const account = ctx.account;
         const accountId = account.accountId ?? 'default';
-        
+
         if (!account.enabled) {
           ctx.log?.info(`[arp] Account ${accountId} not enabled, skipping`);
           return;
@@ -90,36 +89,29 @@ export function createARPChannel(api: any) {
           const context = processInbound(message, acct, ctx.log ?? logger);
           if (!context) return;
 
-          // TODO: Wire proper native ingress via OpenClaw runtime
-          // For now, send a fallback response so mentions don't hang
+          const channelId = message.channelId;
+          if (!channelId) return;
+
           try {
-            const channelId = message.channelId;
-            if (channelId) {
+            await handleARPInbound({
+              context,
+              message,
+              account: acct,
+              config: ctx.cfg,
+              log: ctx.log ?? logger,
+            });
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            ctx.log?.error(`[arp] Failed to process inbound: ${errMsg}`);
+            // Send error response to prevent flow from stalling
+            try {
               await sendToARP(
                 acct,
                 channelId,
-                `[ARP Plugin] Received message but native ingress not fully wired yet. Message type: ${message.type}`,
-                {
-                  flowId: context.metadata.flowId,
-                  isSynthesis: context.metadata.isSynthesis,
-                },
-                ctx.log ?? logger
+                `[ARP Plugin] Error processing message: ${errMsg}`,
+                { flowId: context.metadata.flowId },
+                ctx.log ?? logger,
               );
-            }
-          } catch (err) {
-            ctx.log?.error(`[arp] Failed to send fallback response: ${err}`);
-            // Send error fallback to prevent stalling
-            try {
-              const channelId = message.channelId;
-              if (channelId) {
-                await sendToARP(
-                  acct,
-                  channelId,
-                  `[ARP Plugin] Error processing message: ${err}`,
-                  {},
-                  ctx.log ?? logger
-                );
-              }
             } catch (e) {
               ctx.log?.error(`[arp] Failed to send error fallback: ${e}`);
             }
@@ -152,9 +144,9 @@ export function createARPChannel(api: any) {
     outbound: {
       deliveryMode: 'direct' as const,
 
-      sendText: async ({ 
-        text, 
-        chatId, 
+      sendText: async ({
+        text,
+        chatId,
         accountId,
         cfg,
       }: {
@@ -168,23 +160,15 @@ export function createARPChannel(api: any) {
           return { ok: false, error: 'Account not found' };
         }
 
-        // Check if this is a response to a pending request
-        const callback = pendingResponses.get(chatId);
-        if (callback) {
-          callback(text);
-          return { ok: true };
-        }
-
-        // Otherwise, send as a direct channel message
         // Parse chatId to get channelId and optional flowId
         const [channelId, flowId] = chatId.split(':');
-        
+
         const result = await sendToARP(
           account,
           channelId,
           text,
           { flowId },
-          logger
+          logger,
         );
 
         return result;
@@ -197,7 +181,7 @@ export function createARPChannel(api: any) {
         if (!gateway) {
           return { status: 'disconnected', message: 'Gateway not running' };
         }
-        
+
         const state = gateway.getState();
         if (state.connected) {
           return { status: 'connected', message: 'Connected to ARP relay' };
@@ -211,4 +195,115 @@ export function createARPChannel(api: any) {
   };
 
   return channel;
+}
+
+// --- Inbound message handler using OpenClaw runtime ---
+
+import type { InboundContext } from './inbound.js';
+
+async function handleARPInbound(params: {
+  context: InboundContext;
+  message: ARPMessage;
+  account: ARPAccount;
+  config: any;
+  log: any;
+}): Promise<void> {
+  const { context, message, account, config, log } = params;
+  const core = getARPRuntime();
+
+  const channelId = message.channelId!;
+  const senderId = context.metadata.senderId ?? 'arp-system';
+
+  // Resolve agent route (session key + agent binding)
+  const route = core.channel.routing.resolveAgentRoute({
+    cfg: config,
+    channel: CHANNEL_ID,
+    accountId: account.accountId,
+    peer: {
+      kind: 'group',
+      id: channelId,
+    },
+  });
+
+  // Resolve session store path
+  const storePath = core.channel.session.resolveStorePath(config.session?.store, {
+    agentId: route.agentId,
+  });
+
+  // Format envelope (adds timestamp/channel headers)
+  const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(config);
+  const previousTimestamp = core.channel.session.readSessionUpdatedAt({
+    storePath,
+    sessionKey: route.sessionKey,
+  });
+
+  const fromLabel = `arp:${senderId}`;
+  const body = core.channel.reply.formatAgentEnvelope({
+    channel: 'ARP',
+    from: fromLabel,
+    timestamp: Date.now(),
+    previousTimestamp,
+    envelope: envelopeOptions,
+    body: context.message,
+  });
+
+  // Build finalized message context
+  const ctxPayload = core.channel.reply.finalizeInboundContext({
+    Body: body,
+    RawBody: context.message,
+    CommandBody: context.message,
+    From: `arp:${channelId}`,
+    To: `arp:${channelId}`,
+    SessionKey: route.sessionKey,
+    AccountId: route.accountId,
+    ChatType: 'group',
+    ConversationLabel: fromLabel,
+    SenderName: senderId,
+    SenderId: senderId,
+    GroupSubject: context.metadata.topic ?? channelId,
+    Provider: CHANNEL_ID,
+    Surface: CHANNEL_ID,
+    WasMentioned: message.type === 'mention_notification' ? true : undefined,
+    Timestamp: Date.now(),
+    OriginatingChannel: CHANNEL_ID,
+    OriginatingTo: `arp:${channelId}`,
+  });
+
+  // Record inbound session (persists session state)
+  await core.channel.session.recordInboundSession({
+    storePath,
+    sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+    ctx: ctxPayload,
+    onRecordError: (err: unknown) => {
+      log?.error(`[arp] Failed updating session meta: ${String(err)}`);
+    },
+  });
+
+  // Dispatch reply — triggers agent processing and delivers response via callback
+  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+    ctx: ctxPayload,
+    cfg: config,
+    dispatcherOptions: {
+      deliver: async (payload: { text?: string }) => {
+        const text = payload.text ?? '';
+        if (!text.trim()) return;
+
+        await sendToARP(
+          account,
+          channelId,
+          text,
+          {
+            flowId: context.metadata.flowId,
+            isSynthesis: context.metadata.isSynthesis,
+          },
+          log,
+        );
+      },
+      onError: (err: unknown, info: { kind: string }) => {
+        log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
+      },
+    },
+  });
+
+  log?.info(`[arp] Processed ${message.type} for channel ${channelId}`);
 }

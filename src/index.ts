@@ -6,17 +6,21 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { createARPChannel } from './channel.js';
+import { setARPRuntime } from './runtime.js';
 
 const plugin = {
   id: 'arp',
   name: '@openclaw/arp',
   description: 'Agent Relay Protocol channel plugin for OpenClaw',
   configSchema: emptyPluginConfigSchema(),
-  
+
   register(api: OpenClawPluginApi) {
     const logger = api.logger;
-    
+
     logger.info('[arp] Registering ARP channel plugin');
+
+    // Store runtime for use across modules (session routing, reply dispatch)
+    setARPRuntime(api.runtime);
 
     // Create and register the channel
     const channel = createARPChannel(api);
