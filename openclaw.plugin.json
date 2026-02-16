@@ -2,8 +2,9 @@
   "id": "arp",
   "name": "@openclaw/arp",
   "description": "Agent Relay Protocol channel plugin for OpenClaw",
-  "version": "0.1.0",
-  "entry": "./index.ts",
+  "version": "0.1.1",
+  "entry": "./src/index.ts",
+  "channels": ["arp"],
   "configSchema": {
     "type": "object",
     "properties": {},
