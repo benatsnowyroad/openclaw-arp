@@ -62,82 +62,89 @@ export function createARPChannel(api: any) {
     },
 
     gateway: {
-      start: async (cfg: any, accountId: string) => {
-        const account = channel.config.resolveAccount(cfg, accountId);
-        if (!account || !account.enabled) {
-          logger.info(`[arp] Account ${accountId} not enabled, skipping`);
+      // Use startAccount/stopAccount pattern (matches Telegram/Slack)
+      startAccount: async (ctx: any) => {
+        const account = ctx.account;
+        const accountId = account.accountId ?? 'default';
+        
+        if (!account.enabled) {
+          ctx.log?.info(`[arp] Account ${accountId} not enabled, skipping`);
           return;
         }
 
         if (gateways.has(accountId)) {
-          logger.warn(`[arp] Gateway already running for ${accountId}`);
+          ctx.log?.warn(`[arp] Gateway already running for ${accountId}`);
           return;
         }
 
+        const arpAccount: ARPAccount = {
+          accountId,
+          relayUrl: account.relayUrl,
+          token: account.token,
+          agentId: account.agentId,
+          channels: account.channels ?? [],
+          enabled: true,
+        };
+
         const messageHandler = async (message: ARPMessage, acct: ARPAccount) => {
-          const context = processInbound(message, acct, logger);
+          const context = processInbound(message, acct, ctx.log ?? logger);
           if (!context) return;
 
-          // Route to OpenClaw session
+          // TODO: Wire proper native ingress via OpenClaw runtime
+          // For now, send a fallback response so mentions don't hang
           try {
-            // Emit the message to OpenClaw's message handling pipeline
-            // The response will be caught by the outbound handler
-            const chatKey = context.metadata.flowId 
-              ? `${context.chatId}`
-              : context.chatId;
-            
-            // Store callback for when response arrives
-            pendingResponses.set(chatKey, async (responseContent: string) => {
-              // Send response back to ARP
-              const channelId = message.channelId!;
+            const channelId = message.channelId;
+            if (channelId) {
               await sendToARP(
                 acct,
                 channelId,
-                responseContent,
+                `[ARP Plugin] Received message but native ingress not fully wired yet. Message type: ${message.type}`,
                 {
                   flowId: context.metadata.flowId,
                   isSynthesis: context.metadata.isSynthesis,
                 },
-                logger
+                ctx.log ?? logger
               );
-              pendingResponses.delete(chatKey);
-            });
-
-            // Trigger OpenClaw agent with the message
-            // This uses the internal messaging API
-            api.emitMessage({
-              channel: 'arp',
-              accountId,
-              chatId: context.chatId,
-              sessionKey: context.sessionKey,
-              senderId: context.metadata.senderId ?? 'arp-system',
-              text: context.message,
-              timestamp: Date.now(),
-            });
-
+            }
           } catch (err) {
-            logger.error(`[arp] Failed to process message: ${err}`);
+            ctx.log?.error(`[arp] Failed to send fallback response: ${err}`);
+            // Send error fallback to prevent stalling
+            try {
+              const channelId = message.channelId;
+              if (channelId) {
+                await sendToARP(
+                  acct,
+                  channelId,
+                  `[ARP Plugin] Error processing message: ${err}`,
+                  {},
+                  ctx.log ?? logger
+                );
+              }
+            } catch (e) {
+              ctx.log?.error(`[arp] Failed to send error fallback: ${e}`);
+            }
           }
         };
 
-        const gateway = new ARPGateway(account, messageHandler, logger);
+        const gateway = new ARPGateway(arpAccount, messageHandler, ctx.log ?? logger);
         gateways.set(accountId, gateway);
 
         try {
           await gateway.connect();
-          logger.info(`[arp] Gateway started for ${accountId}`);
+          ctx.log?.info(`[arp] Gateway started for ${accountId}`);
         } catch (err) {
-          logger.error(`[arp] Failed to start gateway for ${accountId}: ${err}`);
+          ctx.log?.error(`[arp] Failed to start gateway for ${accountId}: ${err}`);
           gateways.delete(accountId);
         }
       },
 
-      stop: async (accountId: string) => {
+      stopAccount: async (ctx: any) => {
+        const accountId = ctx.account?.accountId ?? 'default';
         const gateway = gateways.get(accountId);
         if (gateway) {
           await gateway.disconnect();
           gateways.delete(accountId);
-          logger.info(`[arp] Gateway stopped for ${accountId}`);
+          ctx.log?.info(`[arp] Gateway stopped for ${accountId}`);
         }
       },
     },
