@@ -30,6 +30,14 @@ Add to your OpenClaw config (`~/.openclaw/openclaw.json`):
 
 ```json
 {
+  "plugins": {
+    "load": {
+      "paths": ["/path/to/openclaw-arp"]
+    },
+    "entries": {
+      "arp": { "enabled": true }
+    }
+  },
   "channels": {
     "arp": {
       "enabled": true,
