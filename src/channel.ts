@@ -94,6 +94,9 @@ export function createARPChannel(api: any) {
           const channelId = message.channelId;
           if (!channelId) return;
 
+          // Get gateway for typing indicator support
+          const gatewayInstance = gateways.get(accountId);
+
           try {
             await handleARPInbound({
               context,
@@ -101,6 +104,7 @@ export function createARPChannel(api: any) {
               account: acct,
               config: ctx.cfg,
               log: ctx.log ?? logger,
+              gateway: gatewayInstance,
             });
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -202,6 +206,11 @@ export function createARPChannel(api: any) {
 // --- Inbound message handler using OpenClaw runtime ---
 
 import type { InboundContext } from './inbound.js';
+import type { ARPGateway } from './gateway.js';
+
+// Typing indicator settings
+const TYPING_INTERVAL_MS = 5000; // Refresh every 5 seconds
+const TYPING_TTL_MS = 120000; // 2 minute max typing duration
 
 async function handleARPInbound(params: {
   context: InboundContext;
@@ -209,8 +218,9 @@ async function handleARPInbound(params: {
   account: ARPAccount;
   config: any;
   log: any;
+  gateway?: ARPGateway;
 }): Promise<void> {
-  const { context, message, account, config, log } = params;
+  const { context, message, account, config, log, gateway } = params;
   
   let core;
   try {
@@ -222,6 +232,56 @@ async function handleARPInbound(params: {
 
   const channelId = message.channelId!;
   const senderId = context.metadata.senderId ?? 'arp-system';
+
+  // --- Typing indicator setup ---
+  let typingInterval: NodeJS.Timeout | undefined;
+  let typingTtlTimer: NodeJS.Timeout | undefined;
+  let typingActive = false;
+
+  const startTyping = () => {
+    if (typingActive || !gateway) return;
+    typingActive = true;
+    
+    // Send initial typing indicator
+    gateway.sendTyping(channelId, 'start');
+    
+    // Refresh typing every 5 seconds
+    typingInterval = setInterval(() => {
+      if (typingActive && gateway) {
+        gateway.sendTyping(channelId, 'start');
+      }
+    }, TYPING_INTERVAL_MS);
+    
+    // TTL - stop typing after 2 minutes max
+    typingTtlTimer = setTimeout(() => {
+      log?.info(`[arp] Typing TTL reached (2m), stopping indicator`);
+      stopTyping();
+    }, TYPING_TTL_MS);
+    
+    log?.debug(`[arp] Started typing indicator for channel ${channelId}`);
+  };
+
+  const stopTyping = () => {
+    if (!typingActive) return;
+    typingActive = false;
+    
+    if (typingInterval) {
+      clearInterval(typingInterval);
+      typingInterval = undefined;
+    }
+    if (typingTtlTimer) {
+      clearTimeout(typingTtlTimer);
+      typingTtlTimer = undefined;
+    }
+    
+    if (gateway) {
+      gateway.sendTyping(channelId, 'stop');
+    }
+    log?.debug(`[arp] Stopped typing indicator for channel ${channelId}`);
+  };
+
+  // Start typing immediately when we begin processing
+  startTyping();
 
   // Resolve agent route (session key + agent binding)
   const route = core.channel.routing.resolveAgentRoute({
@@ -289,30 +349,39 @@ async function handleARPInbound(params: {
   });
 
   // Dispatch reply — triggers agent processing and delivers response via callback
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-    ctx: ctxPayload,
-    cfg: config,
-    dispatcherOptions: {
-      deliver: async (payload: { text?: string }) => {
-        const text = payload.text ?? '';
-        if (!text.trim()) return;
+  try {
+    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: config,
+      dispatcherOptions: {
+        deliver: async (payload: { text?: string }) => {
+          const text = payload.text ?? '';
+          if (!text.trim()) return;
 
-        await sendToARP(
-          account,
-          channelId,
-          text,
-          {
-            flowId: context.metadata.flowId,
-            isSynthesis: context.metadata.isSynthesis,
-          },
-          log,
-        );
+          // Stop typing before sending response
+          stopTyping();
+
+          await sendToARP(
+            account,
+            channelId,
+            text,
+            {
+              flowId: context.metadata.flowId,
+              isSynthesis: context.metadata.isSynthesis,
+            },
+            log,
+          );
+        },
+        onError: (err: unknown, info: { kind: string }) => {
+          stopTyping();
+          log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
+        },
       },
-      onError: (err: unknown, info: { kind: string }) => {
-        log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
-      },
-    },
-  });
+    });
+  } finally {
+    // Ensure typing is always stopped, even on unexpected exit
+    stopTyping();
+  }
 
   log?.info(`[arp] Processed ${message.type} for channel ${channelId}`);
 }
