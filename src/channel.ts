@@ -206,7 +206,7 @@ export function createARPChannel(api: any) {
 // --- Inbound message handler using OpenClaw runtime ---
 
 import type { InboundContext } from './inbound.js';
-import type { ARPGateway } from './gateway.js';
+// Note: ARPGateway is already imported at top of file
 
 // Typing indicator settings
 const TYPING_INTERVAL_MS = 5000; // Refresh every 5 seconds
