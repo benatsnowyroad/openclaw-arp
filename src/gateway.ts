@@ -147,17 +147,17 @@ export class ARPGateway {
 
   /**
    * Send a typing indicator to the ARP relay
+   * Server expects: type="activity_start"|"activity_stop", channelId, activity="typing"
    */
   sendTyping(channelId: string, action: 'start' | 'stop'): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      const msgType = action === 'start' ? 'activity_start' : 'activity_stop';
       this.ws.send(JSON.stringify({
-        type: 'typing',
+        type: msgType,
         channelId,
-        agentId: this.account.agentId,
-        action,
-        timestamp: Date.now(),
+        activity: 'typing',
       }));
-      this.logger.debug(`[arp] Sent typing ${action} for channel ${channelId}`);
+      this.logger.debug(`[arp] Sent ${msgType} (typing) for channel ${channelId}`);
     }
   }
 }
