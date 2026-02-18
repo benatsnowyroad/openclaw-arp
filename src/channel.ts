@@ -5,6 +5,7 @@ import { ARPGateway } from './gateway.js';
 import { processInbound } from './inbound.js';
 import { sendToARP } from './outbound.js';
 import { getARPRuntime } from './runtime.js';
+import { getChannelMemory } from './api.js';
 
 const CHANNEL_ID = 'arp' as const;
 
@@ -294,6 +295,21 @@ async function handleARPInbound(params: {
     },
   });
 
+  // Fetch channel memory for context injection
+  let channelMemoryContext = '';
+  try {
+    const memory = await getChannelMemory(account, channelId, log);
+    if (memory && memory.content.trim()) {
+      channelMemoryContext = `\n## Channel Memory (shared context for this channel)\n${memory.content}\n---\n\n`;
+      log?.debug(`[arp] Injected channel memory (${memory.content.length} chars) for channel ${channelId}`);
+    }
+  } catch (err) {
+    log?.warn(`[arp] Failed to fetch channel memory: ${err}`);
+  }
+
+  // Prepend channel memory to the message context
+  const messageWithMemory = channelMemoryContext + context.message;
+
   // Resolve session store path
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
@@ -313,7 +329,7 @@ async function handleARPInbound(params: {
     timestamp: Date.now(),
     previousTimestamp,
     envelope: envelopeOptions,
-    body: context.message,
+    body: messageWithMemory,
   });
 
   // Build finalized message context
