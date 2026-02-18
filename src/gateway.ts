@@ -172,6 +172,12 @@ export class ARPGateway {
   }
 
   private scheduleReconnect(): void {
+    // Prevent multiple concurrent reconnection attempts
+    if (this.state.reconnecting) {
+      this.logger.info(`[arp] Reconnect already in progress, skipping duplicate request`);
+      return;
+    }
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.logger.error(`[arp] Max reconnect attempts (${this.maxReconnectAttempts}) reached. Connection will stay offline until gateway restart.`);
       return;
