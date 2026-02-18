@@ -131,10 +131,11 @@ export function processInbound(
     }
 
     case 'channel_message': {
-      // Backend sends { type, channelId, message: { content, senderId, ... } }
+      // Backend sends { type, channelId, message: { content, agentName, agentId, ... } }
       const innerMsg = (message as any).message || message;
       const sessionKey = `arp:channel:${channelId}`;
-      const senderId = innerMsg.senderId || innerMsg.sender_id || 'unknown';
+      // Backend uses agentName for display, agentId for UUID - prefer agentName for readability
+      const senderId = innerMsg.agentName || innerMsg.senderId || innerMsg.sender_id || innerMsg.agentId || 'unknown';
       const content = innerMsg.content || '';
 
       let prompt = `You are ${account.agentId} observing a message in an ARP channel.\n\n`;
