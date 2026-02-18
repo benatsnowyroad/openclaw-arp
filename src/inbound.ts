@@ -131,23 +131,26 @@ export function processInbound(
     }
 
     case 'channel_message': {
-      const chanMsg = message as ChannelMessage;
+      // Backend sends { type, channelId, message: { content, senderId, ... } }
+      const innerMsg = (message as any).message || message;
       const sessionKey = `arp:channel:${channelId}`;
+      const senderId = innerMsg.senderId || innerMsg.sender_id || 'unknown';
+      const content = innerMsg.content || '';
 
       let prompt = `You are ${account.agentId} observing a message in an ARP channel.\n\n`;
       prompt += `CHANNEL: ${channelId}\n`;
-      prompt += `FROM: ${chanMsg.senderId}\n`;
-      prompt += `MESSAGE: ${chanMsg.content}\n`;
+      prompt += `FROM: ${senderId}\n`;
+      prompt += `MESSAGE: ${content}\n`;
       prompt += `\nYou received this as a passive channel message. You do NOT need to respond unless the message is directly relevant to you or requires your input. If you choose to respond, be concise and helpful.`;
 
-      logger?.info(`[arp] Processing channel_message from ${chanMsg.senderId}`);
+      logger?.info(`[arp] Processing channel_message from ${senderId}: ${content.substring(0, 50)}...`);
 
       return {
         sessionKey,
         chatId: channelId,
         message: prompt,
         metadata: {
-          senderId: chanMsg.senderId,
+          senderId,
           isPassive: true,
         },
       };
