@@ -377,56 +377,40 @@ async function handleARPInbound(params: {
     },
   });
 
-  // Dispatch based on message type:
-  // - channel_message (passive): inject as system event, no agent response
-  // - turn_notification / mention_notification / synthesis_request: full agent turn
-  
-  if (message.type === 'channel_message') {
-    // Passive observation - inject into session context without triggering response
-    stopTyping(); // No typing for passive messages
-    
-    const eventText = `[ARP ${channelId}] ${senderId}: ${context.message}`;
-    core.system.enqueueSystemEvent(eventText, { 
-      sessionKey: route.sessionKey 
-    });
-    
-    log?.info(`[arp] Injected passive channel_message for channel ${channelId}`);
-  } else {
-    // Active message - trigger full agent turn with response
-    try {
-      await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-        ctx: ctxPayload,
-        cfg: config,
-        dispatcherOptions: {
-          deliver: async (payload: { text?: string }) => {
-            const text = payload.text ?? '';
-            if (!text.trim()) return;
+  // Dispatch reply — triggers agent processing and delivers response via callback
+  try {
+    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: config,
+      dispatcherOptions: {
+        deliver: async (payload: { text?: string }) => {
+          const text = payload.text ?? '';
+          if (!text.trim()) return;
 
-            // Stop typing before sending response
-            stopTyping();
+          // Stop typing before sending response
+          stopTyping();
 
-            await sendToARP(
-              account,
-              channelId,
-              text,
-              {
-                flowId: context.metadata.flowId,
-                isSynthesis: context.metadata.isSynthesis,
-              },
-              log,
-            );
-          },
-          onError: (err: unknown, info: { kind: string }) => {
-            stopTyping();
-            log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
-          },
+          await sendToARP(
+            account,
+            channelId,
+            text,
+            {
+              flowId: context.metadata.flowId,
+              isSynthesis: context.metadata.isSynthesis,
+            },
+            log,
+          );
         },
-      });
-    } finally {
-      // Ensure typing is always stopped, even on unexpected exit
-      stopTyping();
-    }
-    
-    log?.info(`[arp] Processed ${message.type} for channel ${channelId}`);
+        onError: (err: unknown, info: { kind: string }) => {
+          stopTyping();
+          log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
+        },
+      },
+    });
+  } finally {
+    // Ensure typing is always stopped, even on unexpected exit
+    stopTyping();
   }
+
+  log?.info(`[arp] Processed ${message.type} for channel ${channelId}`);
 }
