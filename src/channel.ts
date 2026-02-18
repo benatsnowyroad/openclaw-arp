@@ -128,6 +128,19 @@ export function createARPChannel(api: any) {
         const gateway = new ARPGateway(arpAccount, messageHandler, ctx.log ?? logger);
         gateways.set(accountId, gateway);
 
+        // Listen for abort signal from gateway manager (critical for clean lifecycle)
+        // This is how Telegram plugin handles it - when gateway restarts, it sends abort
+        if (ctx.abortSignal) {
+          ctx.abortSignal.addEventListener('abort', () => {
+            ctx.log?.info(`[arp] Received abort signal for ${accountId}, disconnecting`);
+            const gw = gateways.get(accountId);
+            if (gw) {
+              gw.disconnect();
+              gateways.delete(accountId);
+            }
+          }, { once: true });
+        }
+
         try {
           await gateway.connect();
           ctx.log?.info(`[arp] Gateway started for ${accountId}`);
