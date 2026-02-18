@@ -131,6 +131,9 @@ export function processInbound(
     }
 
     case 'channel_message': {
+      // DEBUG: Log raw message to see what backend actually sends
+      logger?.info(`[arp] RAW channel_message: ${JSON.stringify(message)}`);
+      
       // Backend sends { type, channelId, message: { content, agentName, agentId, ... } }
       const innerMsg = (message as any).message || message;
       const sessionKey = `arp:channel:${channelId}`;
