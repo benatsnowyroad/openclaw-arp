@@ -5,6 +5,12 @@ import type { ARPAccount, ARPMessage, ConnectionState } from './types.js';
 
 export type MessageHandler = (message: ARPMessage, account: ARPAccount) => void;
 
+// Stability threshold: reset reconnect counter after this many ms of stable connection
+const STABILITY_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+// Heartbeat watchdog: force reconnect if no server heartbeat received within this time
+const HEARTBEAT_WATCHDOG_MS = 65 * 1000; // 65 seconds (server sends every 30s)
+
 export class ARPGateway {
   private ws: WebSocket | null = null;
   private account: ARPAccount;
@@ -14,6 +20,9 @@ export class ARPGateway {
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private watchdogTimeout: NodeJS.Timeout | null = null;
+  private lastServerHeartbeat: number = 0;
+  private connectionStartTime: number = 0;
   private state: ConnectionState = { connected: false, reconnecting: false };
 
   constructor(account: ARPAccount, messageHandler: MessageHandler, logger: any) {
@@ -32,9 +41,12 @@ export class ARPGateway {
       
       this.ws.on('open', () => {
         this.logger.info(`[arp] Connected to ARP relay`);
+        this.connectionStartTime = Date.now();
+        this.lastServerHeartbeat = Date.now();
         this.state = { connected: true, reconnecting: false, lastConnected: new Date() };
         this.reconnectAttempts = 0;
         this.startHeartbeat();
+        this.startWatchdog();
         resolve();
       });
 
@@ -49,9 +61,17 @@ export class ARPGateway {
 
       this.ws.on('close', (code, reason) => {
         const reasonStr = reason ? reason.toString() : 'no reason';
-        this.logger.warn(`[arp] Connection closed: code=${code} reason=${reasonStr}`);
+        
+        // Enhanced logging for 4003 (replaced by new connection)
+        if (code === 4003) {
+          this.logger.error(`[arp] Connection replaced (4003): ${reasonStr}. Another instance may be connecting with same identity.`);
+        } else {
+          this.logger.warn(`[arp] Connection closed: code=${code} reason=${reasonStr}`);
+        }
+        
         this.state.connected = false;
         this.stopHeartbeat();
+        this.stopWatchdog();
         this.scheduleReconnect();
       });
 
@@ -69,21 +89,34 @@ export class ARPGateway {
     switch (message.type) {
       case 'hello':
         this.logger.info(`[arp] Received hello from relay`);
+        this.lastServerHeartbeat = Date.now();
         break;
       
       case 'heartbeat':
+        this.lastServerHeartbeat = Date.now();
         this.sendHeartbeatAck();
+        // Check if connection has been stable long enough to reset retry counter
+        this.checkStabilityAndResetRetries();
         break;
       
       case 'turn_notification':
       case 'synthesis_request':
       case 'mention_notification':
       case 'channel_message':
+        this.lastServerHeartbeat = Date.now(); // Any message counts as activity
         this.messageHandler(message, this.account);
         break;
       
       default:
         this.logger.debug(`[arp] Unhandled message type: ${message.type}`);
+    }
+  }
+
+  private checkStabilityAndResetRetries(): void {
+    const connectionDuration = Date.now() - this.connectionStartTime;
+    if (connectionDuration >= STABILITY_THRESHOLD_MS && this.reconnectAttempts > 0) {
+      this.logger.info(`[arp] Connection stable for ${Math.round(connectionDuration / 1000)}s, resetting retry counter`);
+      this.reconnectAttempts = 0;
     }
   }
 
@@ -109,9 +142,38 @@ export class ARPGateway {
     }
   }
 
+  private startWatchdog(): void {
+    // Check every 30s if we've received a heartbeat from server
+    this.watchdogTimeout = setInterval(() => {
+      const timeSinceLastHeartbeat = Date.now() - this.lastServerHeartbeat;
+      if (timeSinceLastHeartbeat > HEARTBEAT_WATCHDOG_MS) {
+        this.logger.warn(`[arp] Heartbeat watchdog triggered: no server heartbeat for ${Math.round(timeSinceLastHeartbeat / 1000)}s, forcing reconnect`);
+        this.forceReconnect();
+      }
+    }, 30000);
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimeout) {
+      clearInterval(this.watchdogTimeout);
+      this.watchdogTimeout = null;
+    }
+  }
+
+  private forceReconnect(): void {
+    this.stopHeartbeat();
+    this.stopWatchdog();
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.state.connected = false;
+    this.scheduleReconnect();
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.logger.error(`[arp] Max reconnect attempts reached`);
+      this.logger.error(`[arp] Max reconnect attempts (${this.maxReconnectAttempts}) reached. Connection will stay offline until gateway restart.`);
       return;
     }
 
@@ -119,7 +181,7 @@ export class ARPGateway {
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 60000);
     
-    this.logger.info(`[arp] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    this.logger.info(`[arp] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
     
     setTimeout(() => {
       this.connect().catch(err => {
@@ -130,6 +192,7 @@ export class ARPGateway {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+    this.stopWatchdog();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
