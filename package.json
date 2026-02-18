@@ -5,7 +5,9 @@
   "main": "src/index.ts",
   "type": "module",
   "openclaw": {
-    "extensions": ["./src/index.ts"],
+    "extensions": [
+      "./src/index.ts"
+    ],
     "channel": {
       "id": "arp",
       "label": "Agent Relay Protocol",
@@ -14,13 +16,23 @@
       "blurb": "Multi-agent coordination and structured conversations via ARP"
     }
   },
-  "keywords": ["openclaw", "arp", "multi-agent", "channel"],
+  "keywords": [
+    "openclaw",
+    "arp",
+    "multi-agent",
+    "channel"
+  ],
   "author": "Snowy Road",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "ws": "^8.16.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
   }
 }
