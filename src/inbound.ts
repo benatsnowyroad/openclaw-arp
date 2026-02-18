@@ -1,12 +1,13 @@
 // ARP Inbound - Handle incoming messages from ARP relay
 
-import type { 
-  ARPMessage, 
-  ARPAccount, 
-  TurnNotification, 
-  SynthesisRequest, 
+import type {
+  ARPMessage,
+  ARPAccount,
+  TurnNotification,
+  SynthesisRequest,
   MentionNotification,
-  RecentMessage 
+  ChannelMessage,
+  RecentMessage
 } from './types.js';
 
 export interface InboundContext {
@@ -18,6 +19,7 @@ export interface InboundContext {
     topic?: string;
     isSynthesis?: boolean;
     senderId?: string;
+    isPassive?: boolean;
   };
 }
 
@@ -124,6 +126,29 @@ export function processInbound(
         message: prompt,
         metadata: {
           senderId: mention.senderId,
+        },
+      };
+    }
+
+    case 'channel_message': {
+      const chanMsg = message as ChannelMessage;
+      const sessionKey = `arp:channel:${channelId}`;
+
+      let prompt = `You are ${account.agentId} observing a message in an ARP channel.\n\n`;
+      prompt += `CHANNEL: ${channelId}\n`;
+      prompt += `FROM: ${chanMsg.senderId}\n`;
+      prompt += `MESSAGE: ${chanMsg.content}\n`;
+      prompt += `\nYou received this as a passive channel message. You do NOT need to respond unless the message is directly relevant to you or requires your input. If you choose to respond, be concise and helpful.`;
+
+      logger?.info(`[arp] Processing channel_message from ${chanMsg.senderId}`);
+
+      return {
+        sessionKey,
+        chatId: channelId,
+        message: prompt,
+        metadata: {
+          senderId: chanMsg.senderId,
+          isPassive: true,
         },
       };
     }
