@@ -348,6 +348,7 @@ async function handleARPInbound(params: {
   // Build finalized message context
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: body,
+    BodyForAgent: body,
     RawBody: context.message,
     CommandBody: context.message,
     From: `arp:${channelId}`,
