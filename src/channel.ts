@@ -5,7 +5,7 @@ import { ARPGateway } from './gateway.js';
 import { processInbound } from './inbound.js';
 import { sendToARP } from './outbound.js';
 import { getARPRuntime } from './runtime.js';
-import { getChannelMemory } from './api.js';
+import { getChannelMemory, listTopics } from './api.js';
 
 const CHANNEL_ID = 'arp' as const;
 
@@ -308,20 +308,35 @@ async function handleARPInbound(params: {
     },
   });
 
-  // Fetch channel memory for context injection
+  // Fetch channel memory and topics in parallel
   let channelMemoryContext = '';
-  try {
-    const memory = await getChannelMemory(account, channelId, log);
-    if (memory && memory.content.trim()) {
-      channelMemoryContext = `\n## Channel Memory (shared context for this channel)\n${memory.content}\n---\n\n`;
-      log?.debug(`[arp] Injected channel memory (${memory.content.length} chars) for channel ${channelId}`);
-    }
-  } catch (err) {
-    log?.warn(`[arp] Failed to fetch channel memory: ${err}`);
+  let topicSummaryContext = '';
+
+  const [memoryResult, topicsResult] = await Promise.allSettled([
+    getChannelMemory(account, channelId, log),
+    listTopics(account, channelId, log),
+  ]);
+
+  if (memoryResult.status === 'fulfilled' && memoryResult.value?.content.trim()) {
+    channelMemoryContext = `\n## Channel Memory (shared context for this channel)\n${memoryResult.value.content}\n---\n\n`;
+    log?.debug(`[arp] Injected channel memory (${memoryResult.value.content.length} chars) for channel ${channelId}`);
+  } else if (memoryResult.status === 'rejected') {
+    log?.warn(`[arp] Failed to fetch channel memory: ${memoryResult.reason}`);
   }
 
-  // Prepend channel memory to the message context
-  const messageWithMemory = channelMemoryContext + context.message;
+  if (topicsResult.status === 'fulfilled' && topicsResult.value.length > 0) {
+    const lines = topicsResult.value.map((t) => {
+      const count = t.messageCount != null ? ` (${t.messageCount} messages)` : '';
+      return `- ${t.name}${count}`;
+    });
+    topicSummaryContext = `\n## Channel Topics\n${lines.join('\n')}\n---\n\n`;
+    log?.debug(`[arp] Injected ${topicsResult.value.length} topics for channel ${channelId}`);
+  } else if (topicsResult.status === 'rejected') {
+    log?.warn(`[arp] Failed to fetch topics: ${topicsResult.reason}`);
+  }
+
+  // Prepend channel memory + topic summary to the message context
+  const messageWithMemory = channelMemoryContext + topicSummaryContext + context.message;
 
   // Resolve session store path
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
