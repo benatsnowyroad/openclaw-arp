@@ -76,6 +76,27 @@ export interface ARPOutboundMessage {
   isSynthesis?: boolean;
 }
 
+// Topic types
+export interface ARPTopic {
+  id: string;
+  name: string;
+  channelId: string;
+  messageCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ARPChannelMessage {
+  id: string;
+  channelId: string;
+  content: string;
+  senderId?: string;
+  agentId?: string;
+  agentName?: string;
+  topicId?: string;
+  createdAt?: string;
+}
+
 // WebSocket connection state
 export interface ConnectionState {
   connected: boolean;
