@@ -13,6 +13,18 @@ function authHeaders(account: ARPAccount): Record<string, string> {
   };
 }
 
+export interface PinnedFile {
+  id: string;
+  channelId: string;
+  repoUrl: string;
+  filePath: string;
+  branch: string;
+  displayName: string;
+  cachedContent: string | null;
+  injectContext: boolean;
+  lastSyncedAt: string | null;
+}
+
 export interface ChannelMemory {
   content: string;
   updatedAt: string | null;
@@ -56,6 +68,36 @@ export async function getChannelMemory(
   } catch (err) {
     logger?.warn(`[arp] Error fetching channel memory: ${err}`);
     return null;
+  }
+}
+
+/**
+ * List pinned files for a channel
+ */
+export async function listPinnedFiles(
+  account: ARPAccount,
+  channelId: string,
+  logger?: any
+): Promise<PinnedFile[]> {
+  const url = `${baseUrl(account)}/channels/${channelId}/pins`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: authHeaders(account),
+    });
+
+    if (!res.ok) {
+      if (res.status === 404) return [];
+      logger?.warn(`[arp] Failed to fetch pinned files: ${res.status}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return data.pins || [];
+  } catch (err) {
+    logger?.warn(`[arp] Error fetching pinned files: ${err}`);
+    return [];
   }
 }
 

@@ -5,7 +5,7 @@ import { ARPGateway } from './gateway.js';
 import { processInbound } from './inbound.js';
 import { sendToARP } from './outbound.js';
 import { getARPRuntime } from './runtime.js';
-import { getChannelMemory, listTopics } from './api.js';
+import { getChannelMemory, listTopics, listPinnedFiles } from './api.js';
 
 const CHANNEL_ID = 'arp' as const;
 
@@ -308,13 +308,15 @@ async function handleARPInbound(params: {
     },
   });
 
-  // Fetch channel memory and topics in parallel
+  // Fetch channel memory, topics, and pinned files in parallel
   let channelMemoryContext = '';
   let topicSummaryContext = '';
+  let pinnedFilesContext = '';
 
-  const [memoryResult, topicsResult] = await Promise.allSettled([
+  const [memoryResult, topicsResult, pinsResult] = await Promise.allSettled([
     getChannelMemory(account, channelId, log),
     listTopics(account, channelId, log),
+    listPinnedFiles(account, channelId, log),
   ]);
 
   if (memoryResult.status === 'fulfilled' && memoryResult.value?.content.trim()) {
@@ -335,8 +337,23 @@ async function handleARPInbound(params: {
     log?.warn(`[arp] Failed to fetch topics: ${topicsResult.reason}`);
   }
 
-  // Prepend channel memory + topic summary to the message context
-  const messageWithMemory = channelMemoryContext + topicSummaryContext + context.message;
+  // Inject pinned file contents (only those with inject_context=true)
+  if (pinsResult.status === 'fulfilled' && pinsResult.value.length > 0) {
+    const injectable = pinsResult.value.filter((p) => p.injectContext && p.cachedContent);
+    if (injectable.length > 0) {
+      const sections = injectable.map((p) => {
+        const label = p.displayName || `${p.repoUrl}/${p.filePath}`;
+        return `### 📌 ${label}\n${p.cachedContent}`;
+      });
+      pinnedFilesContext = `\n## Pinned Files (from GitHub)\n${sections.join('\n\n')}\n---\n\n`;
+      log?.debug(`[arp] Injected ${injectable.length} pinned file(s) for channel ${channelId}`);
+    }
+  } else if (pinsResult.status === 'rejected') {
+    log?.warn(`[arp] Failed to fetch pinned files: ${pinsResult.reason}`);
+  }
+
+  // Prepend channel memory + pinned files + topic summary to the message context
+  const messageWithMemory = channelMemoryContext + pinnedFilesContext + topicSummaryContext + context.message;
 
   // Resolve session store path
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
