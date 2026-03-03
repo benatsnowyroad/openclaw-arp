@@ -7,7 +7,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { createARPChannel } from './channel.js';
 import { setARPRuntime } from './runtime.js';
-import { updateChannelMemory, listTopics, createTopic, moveMessagesToTopic, listMessages } from './api.js';
+import { updateChannelMemory, listTopics, createTopic, moveMessagesToTopic, listMessages, raiseAttention } from './api.js';
 
 const plugin = {
   id: 'arp',
@@ -230,6 +230,47 @@ const plugin = {
         return {
           content: [{ type: 'text', text: JSON.stringify({ messages }, null, 2) }],
         };
+      },
+    });
+
+    // Register arp_raise_attention tool
+    api.registerTool({
+      name: 'arp_raise_attention',
+      description: 'Raise attention on an ARP channel to signal humans that a bot needs input. Use when blocked, encountering errors, or needing human review. Levels: info (FYI, auto-clears), action_required (bot is blocked), critical (urgent/broken).',
+      parameters: {
+        type: 'object',
+        properties: {
+          channelId: {
+            type: 'string',
+            description: 'The ARP channel ID to raise attention on',
+          },
+          level: {
+            type: 'string',
+            enum: ['info', 'action_required', 'critical'],
+            description: 'Attention level: info (FYI), action_required (blocked, needs input), critical (urgent/broken)',
+          },
+          reason: {
+            type: 'string',
+            description: 'Human-readable reason explaining why attention is needed',
+          },
+        },
+        required: ['channelId', 'level', 'reason'],
+      },
+      async execute(_id: string, params: { channelId: string; level: 'info' | 'action_required' | 'critical'; reason: string }) {
+        const arpAccount = resolveAccount();
+        if (!arpAccount) return noAccountError();
+
+        const success = await raiseAttention(arpAccount, params.channelId, params.level, params.reason, logger);
+
+        if (success) {
+          return {
+            content: [{ type: 'text', text: `Attention raised: ${params.level} on channel ${params.channelId} — "${params.reason}"` }],
+          };
+        } else {
+          return {
+            content: [{ type: 'text', text: `Failed to raise attention on channel ${params.channelId}` }],
+          };
+        }
       },
     });
 

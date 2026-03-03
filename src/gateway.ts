@@ -106,6 +106,11 @@ export class ARPGateway {
         this.lastServerHeartbeat = Date.now(); // Any message counts as activity
         this.messageHandler(message, this.account);
         break;
+
+      case 'summary_request':
+        this.lastServerHeartbeat = Date.now();
+        this.handleSummaryRequest(message);
+        break;
       
       default:
         this.logger.debug(`[arp] Unhandled message type: ${message.type}`);
@@ -218,6 +223,68 @@ export class ARPGateway {
    * Send a typing indicator to the ARP relay
    * Server expects: type="activity_start"|"activity_stop", channelId, activity="typing"
    */
+  /**
+   * Handle summary_request: generate a context summary and respond via WebSocket.
+   * Uses channel memory + recent messages to build a seed prompt for forking.
+   */
+  private handleSummaryRequest(message: ARPMessage): void {
+    const { requestId, channelId, channelName, memory, messages } = message as any;
+    if (!requestId) {
+      this.logger.warn('[arp] summary_request missing requestId');
+      return;
+    }
+
+    this.logger.info(`[arp] Handling summary_request: requestId=${requestId} channel=${channelName || channelId}`);
+
+    // Build summary from provided context
+    const parts: string[] = [];
+    
+    if (channelName) {
+      parts.push(`This channel (#${channelName}) has been discussing the following:`);
+    }
+
+    if (memory && typeof memory === 'string' && memory.trim()) {
+      parts.push('');
+      parts.push('**Key context:**');
+      parts.push(memory.trim());
+    }
+
+    if (Array.isArray(messages) && messages.length > 0) {
+      parts.push('');
+      parts.push('**Recent discussion highlights:**');
+      // Summarize last ~10 messages to keep it concise
+      const recent = messages.slice(-10);
+      for (const msg of recent) {
+        const sender = msg.sender || msg.type || 'unknown';
+        const content = typeof msg.content === 'string' ? msg.content.slice(0, 200) : '';
+        if (content) {
+          parts.push(`- ${sender}: ${content}${msg.content?.length > 200 ? '...' : ''}`);
+        }
+      }
+    }
+
+    if (parts.length === 0) {
+      parts.push(`Forked from #${channelName || 'unknown'}. Continue the discussion here.`);
+    }
+
+    parts.push('');
+    parts.push('Continue this discussion in the forked channel.');
+
+    const summary = parts.join('\n');
+
+    // Send response back over WebSocket
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'summary_response',
+        requestId,
+        summary,
+      }));
+      this.logger.info(`[arp] Sent summary_response for requestId=${requestId} (${summary.length} chars)`);
+    } else {
+      this.logger.error(`[arp] WebSocket not open, cannot send summary_response for requestId=${requestId}`);
+    }
+  }
+
   sendTyping(channelId: string, action: 'start' | 'stop'): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const msgType = action === 'start' ? 'activity_start' : 'activity_stop';

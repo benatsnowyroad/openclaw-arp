@@ -229,6 +229,43 @@ export async function moveMessagesToTopic(
   }
 }
 
+// --- Attention API ---
+
+export type AttentionLevel = 'info' | 'action_required' | 'critical';
+
+/**
+ * Raise attention on a channel (bot→human signal)
+ */
+export async function raiseAttention(
+  account: ARPAccount,
+  channelId: string,
+  level: AttentionLevel,
+  reason: string,
+  logger?: any
+): Promise<boolean> {
+  const url = `${baseUrl(account)}/channels/${channelId}/attention`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: authHeaders(account),
+      body: JSON.stringify({ level, reason }),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      logger?.warn(`[arp] Failed to raise attention: ${res.status} ${errorText}`);
+      return false;
+    }
+
+    logger?.info(`[arp] Raised ${level} attention on channel ${channelId}: ${reason}`);
+    return true;
+  } catch (err) {
+    logger?.warn(`[arp] Error raising attention: ${err}`);
+    return false;
+  }
+}
+
 /**
  * List messages in a channel (with optional topic filter)
  */
