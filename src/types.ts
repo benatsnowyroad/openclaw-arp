@@ -11,13 +11,16 @@ export interface ARPAccount {
   accountId: string;
   relayUrl: string;
   token: string;
-  agentId: string;
+  agentId: string;       // Agent name (display identifier)
+  agentUuid?: string;    // Agent UUID (canonical identifier, Stage 8a)
   channels: string[];
   enabled?: boolean;
 }
 
 export interface RecentMessage {
-  agentId: string;
+  agentId?: string;      // Agent name (legacy field name from server's agentName)
+  agentName?: string;    // Agent name (server sends this in recentMessages)
+  agentUuid?: string;    // Agent UUID
   content: string;
   createdAt?: string;
 }

@@ -28,7 +28,9 @@ function formatRecentMessages(messages?: RecentMessage[]): string {
 
   let history = '\n\nDISCUSSION HISTORY:\n';
   for (const msg of messages) {
-    history += `[${msg.agentId}]: ${msg.content}\n`;
+    // Server sends agentName in recentMessages; agentId is legacy field name
+    const name = msg.agentName || msg.agentId || 'unknown';
+    history += `[${name}]: ${msg.content}\n`;
   }
   history += '---\n';
   return history;
