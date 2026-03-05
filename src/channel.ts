@@ -79,14 +79,34 @@ export function createARPChannel(api: any) {
           return;
         }
 
-        const arpAccount: ARPAccount = {
+        let arpAccount: ARPAccount = {
           accountId,
           relayUrl: account.relayUrl,
           token: account.token,
           agentId: account.agentId,
+          agentUuid: account.agentUuid,
           channels: account.channels ?? [],
           enabled: true,
         };
+
+        // Stage 8a: Auto-fetch UUID if not in config
+        if (!arpAccount.agentUuid) {
+          try {
+            const baseUrl = account.relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
+            const res = await fetch(`${baseUrl}/agents/${account.agentId}`, {
+              headers: { 'Authorization': `Bearer ${account.token}` },
+            });
+            if (res.ok) {
+              const agent = await res.json();
+              if (agent.agentUuid) {
+                arpAccount.agentUuid = agent.agentUuid;
+                logger.info(`[arp] Auto-resolved UUID for ${account.agentId}: ${agent.agentUuid}`);
+              }
+            }
+          } catch (err) {
+            logger.warn(`[arp] Could not auto-fetch UUID for ${account.agentId}: ${err}`);
+          }
+        }
 
         const messageHandler = async (message: ARPMessage, acct: ARPAccount) => {
           const context = processInbound(message, acct, ctx.log ?? logger);

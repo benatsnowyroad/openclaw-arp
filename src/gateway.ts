@@ -32,7 +32,9 @@ export class ARPGateway {
   }
 
   async connect(): Promise<void> {
-    const url = `${this.account.relayUrl}/ws/agent/${this.account.agentId}?token=${this.account.token}`;
+    // Stage 8a: prefer UUID for WebSocket connection (server accepts both)
+    const wsAgentId = this.account.agentUuid || this.account.agentId;
+    const url = `${this.account.relayUrl}/ws/agent/${wsAgentId}?token=${this.account.token}`;
     
     this.logger.info(`[arp] Connecting to relay: ${this.account.relayUrl}`);
     

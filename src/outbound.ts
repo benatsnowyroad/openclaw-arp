@@ -29,7 +29,7 @@ export async function sendToARP(
   }
 
   const body: ARPOutboundMessage = {
-    agentId: account.agentId,
+    agentId: account.agentUuid || account.agentId, // Prefer UUID when configured
     content,
   };
   
