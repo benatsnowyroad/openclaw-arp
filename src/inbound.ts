@@ -49,10 +49,25 @@ If the request is ambiguous (e.g. "everyone remember X"), still write — but fi
 `;
 }
 
-function terminalStreamingInstructions(channelId: string): string {
+function claudeCodeSessionInstructions(channelId: string, agentId: string): string {
   return `
-TERMINAL STREAMING:
-When performing coding tasks that involve a terminal session (e.g., running Claude Code):
+CLAUDE CODE SESSIONS:
+When you spawn a Claude Code (CC) session for coding tasks, you MUST provide the following context as part of the first message so the CC session can signal back into ARP:
+
+ARP_CHANNEL_ID: ${channelId}
+ARP_AGENT_NAME: ${agentId}
+ARP_TERMINAL_STREAMING: active (your terminal output is being streamed live to channel members)
+
+The CC session has an arp_signal MCP tool. Instruct it to use these signal types at the appropriate times:
+- task_complete: When the assigned work is finished. Include a summary of changes.
+- review_requested: When you need sign-off or approval before proceeding.
+- blocker: When you're stuck and need help. This auto-raises "action_required" attention on the channel.
+- status_update: Periodic progress reports during long-running tasks.
+- escalation: Urgent — use when the dispatcher is unresponsive and you need channel-wide help. This auto-raises "critical" attention.
+
+Each signal takes: channel_id, signal_type, summary (required), and optionally details, mentions (array of agent names to @-notify), terminal_session_id, and task_id.
+
+TERMINAL STREAMING FORMAT:
 1. Create a session: POST /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. Returns session_id and ws_url.
 2. Connect to the streaming WebSocket at the ws_url with role=streamer.
 3. Capture raw PTY output using node-pty: const pty = require('node-pty').spawn('bash', [], { cols: 80, rows: 24 }); pty.onData(data => ws.send(Buffer.from(data)));
@@ -98,7 +113,7 @@ export function processInbound(
       
       prompt += formatRecentMessages(turn.recentMessages);
       prompt += memoryToolInstructions(channelId, account.agentId);
-      prompt += terminalStreamingInstructions(channelId);
+      prompt += claudeCodeSessionInstructions(channelId, account.agentId);
       prompt += `\nIt's your turn. Provide a substantive response to the discussion.`;
 
       logger?.info(`[arp] Processing turn_notification for flow ${turn.flowId}`);
@@ -151,7 +166,7 @@ export function processInbound(
       prompt += `MENTIONED BY: ${mention.senderId}\n`;
       prompt += `MESSAGE: ${mention.content}\n`;
       prompt += memoryToolInstructions(channelId, account.agentId);
-      prompt += terminalStreamingInstructions(channelId);
+      prompt += claudeCodeSessionInstructions(channelId, account.agentId);
       prompt += `\nRespond naturally and concisely to the mention above.`;
 
       logger?.info(`[arp] Processing mention_notification from ${mention.senderId}`);
@@ -179,7 +194,7 @@ export function processInbound(
       prompt += `FROM: ${senderId}\n`;
       prompt += `MESSAGE: ${content}\n`;
       prompt += memoryToolInstructions(channelId, account.agentId);
-      prompt += terminalStreamingInstructions(channelId);
+      prompt += claudeCodeSessionInstructions(channelId, account.agentId);
       prompt += `\nYou received this as a passive channel message. You do NOT need to respond unless the message is directly relevant to you or requires your input. If you choose to respond, be concise and helpful. EXCEPTION: If the message asks to remember/save something, you MUST use the update_channel_memory tool even if you don't send a visible reply.`;
 
       logger?.info(`[arp] Processing channel_message from ${senderId}: ${content.substring(0, 50)}...`);
