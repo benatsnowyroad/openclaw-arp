@@ -49,6 +49,22 @@ If the request is ambiguous (e.g. "everyone remember X"), still write — but fi
 `;
 }
 
+function terminalStreamingInstructions(channelId: string): string {
+  return `
+TERMINAL STREAMING:
+When performing coding tasks that involve a terminal session (e.g., running Claude Code):
+1. Create a session: POST /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. Returns session_id and ws_url.
+2. Connect to the streaming WebSocket at the ws_url with role=streamer.
+3. Capture raw PTY output using node-pty: const pty = require('node-pty').spawn('bash', [], { cols: 80, rows: 24 }); pty.onData(data => ws.send(Buffer.from(data)));
+4. CRITICAL: Terminal output MUST be sent as binary WebSocket frames containing raw PTY/ANSI escape sequences. Do NOT wrap in JSON. Do NOT base64-encode. Just ws.send(Buffer.from(data)). The frontend uses xterm.js which only renders raw ANSI — anything else (JSON, base64) shows a blank screen.
+5. Do NOT use tmux capture-pane polling — it loses escape sequences and real-time cursor events.
+6. Control messages are the ONLY thing sent as JSON text frames:
+   - End session: {"type": "end", "summary": "what was accomplished"}
+   - Resize: {"type": "resize", "cols": 120, "rows": 40}
+   - Heartbeat ack: {"type": "heartbeat_ack"}
+`;
+}
+
 export function processInbound(
   message: ARPMessage,
   account: ARPAccount,
@@ -82,19 +98,7 @@ export function processInbound(
       
       prompt += formatRecentMessages(turn.recentMessages);
       prompt += memoryToolInstructions(channelId, account.agentId);
-      prompt += `
-TERMINAL STREAMING:
-When performing coding tasks that involve a terminal session (e.g., running Claude Code):
-1. Create a session: POST /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. Returns session_id and ws_url.
-2. Connect to the streaming WebSocket at the ws_url with role=streamer.
-3. Capture raw PTY output using node-pty: const pty = require('node-pty').spawn('bash', [], { cols: 80, rows: 24 }); pty.onData(data => ws.send(Buffer.from(data)));
-4. CRITICAL: Terminal output MUST be sent as binary WebSocket frames containing raw PTY/ANSI escape sequences. Do NOT wrap in JSON. Do NOT base64-encode. Just ws.send(Buffer.from(data)). The frontend uses xterm.js which only renders raw ANSI — anything else (JSON, base64) shows a blank screen.
-5. Do NOT use tmux capture-pane polling — it loses escape sequences and real-time cursor events.
-6. Control messages are the ONLY thing sent as JSON text frames:
-   - End session: {"type": "end", "summary": "what was accomplished"}
-   - Resize: {"type": "resize", "cols": 120, "rows": 40}
-   - Heartbeat ack: {"type": "heartbeat_ack"}
-`;
+      prompt += terminalStreamingInstructions(channelId);
       prompt += `\nIt's your turn. Provide a substantive response to the discussion.`;
 
       logger?.info(`[arp] Processing turn_notification for flow ${turn.flowId}`);
@@ -147,6 +151,7 @@ When performing coding tasks that involve a terminal session (e.g., running Clau
       prompt += `MENTIONED BY: ${mention.senderId}\n`;
       prompt += `MESSAGE: ${mention.content}\n`;
       prompt += memoryToolInstructions(channelId, account.agentId);
+      prompt += terminalStreamingInstructions(channelId);
       prompt += `\nRespond naturally and concisely to the mention above.`;
 
       logger?.info(`[arp] Processing mention_notification from ${mention.senderId}`);
@@ -174,6 +179,7 @@ When performing coding tasks that involve a terminal session (e.g., running Clau
       prompt += `FROM: ${senderId}\n`;
       prompt += `MESSAGE: ${content}\n`;
       prompt += memoryToolInstructions(channelId, account.agentId);
+      prompt += terminalStreamingInstructions(channelId);
       prompt += `\nYou received this as a passive channel message. You do NOT need to respond unless the message is directly relevant to you or requires your input. If you choose to respond, be concise and helpful. EXCEPTION: If the message asks to remember/save something, you MUST use the update_channel_memory tool even if you don't send a visible reply.`;
 
       logger?.info(`[arp] Processing channel_message from ${senderId}: ${content.substring(0, 50)}...`);
