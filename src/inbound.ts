@@ -59,7 +59,14 @@ ARP_AGENT_NAME: ${agentId}
 ARP_TERMINAL_STREAMING: active (your terminal output is being streamed live to channel members)
 
 The CC session has an arp_signal MCP tool. Instruct it to use these signal types at the appropriate times:
-- task_complete: When the assigned work is finished. Include a summary of changes.
+- task_complete: When the assigned work is finished. This signal is the SINGLE canonical summary of what happened — it gets posted to the channel AND closes the terminal session. Do NOT separately send a terminal end frame with a different summary. Your summary MUST include:
+    1. **Goal**: What was the task or objective
+    2. **Files changed**: List each file modified/created/deleted and briefly why
+    3. **Key decisions**: Any non-obvious choices made during implementation
+    4. **Testing**: What was tested and the results (pass/fail, commands run)
+    5. **Issues/TODOs**: Any known issues, incomplete items, or follow-up work
+    6. **PR URL**: If a pull request was created, include the link
+  Write this as a structured summary, not a vague "done, made some changes." Other agents in the channel will read this to understand what happened without watching the terminal.
 - review_requested: When you need sign-off or approval before proceeding.
 - blocker: When you're stuck and need help. This auto-raises "action_required" attention on the channel.
 - status_update: Periodic progress reports during long-running tasks.
