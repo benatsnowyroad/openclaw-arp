@@ -272,55 +272,70 @@ async function handleARPInbound(params: {
   const channelId = message.channelId!;
   const senderId = context.metadata.senderId ?? 'arp-system';
 
-  // --- Typing indicator setup ---
-  let typingInterval: NodeJS.Timeout | undefined;
-  let typingTtlTimer: NodeJS.Timeout | undefined;
-  let typingActive = false;
+  // --- Activity indicator lifecycle ---
+  // Two-phase: "thinking" on receipt → "typing" on first streamed chunk → relay auto-clears on POST
+  let activityInterval: NodeJS.Timeout | undefined;
+  let activityTtlTimer: NodeJS.Timeout | undefined;
+  let activityActive = false;
+  let currentActivity: string = 'thinking';
 
-  const startTyping = () => {
-    if (typingActive || !gateway) return;
-    typingActive = true;
-    
-    // Send initial typing indicator
-    gateway.sendTyping(channelId, 'start');
-    
-    // Refresh typing every 5 seconds
-    typingInterval = setInterval(() => {
-      if (typingActive && gateway) {
-        gateway.sendTyping(channelId, 'start');
+  const startActivity = (activity: string) => {
+    if (activityActive || !gateway) return;
+    activityActive = true;
+    currentActivity = activity;
+
+    // Send initial activity indicator
+    gateway.sendActivity(channelId, 'start', currentActivity);
+
+    // Refresh activity every 5 seconds (server-side TTL requires periodic pings)
+    activityInterval = setInterval(() => {
+      if (activityActive && gateway) {
+        gateway.sendActivity(channelId, 'start', currentActivity);
       }
     }, TYPING_INTERVAL_MS);
-    
-    // TTL - stop typing after 2 minutes max
-    typingTtlTimer = setTimeout(() => {
-      log?.info(`[arp] Typing TTL reached (2m), stopping indicator`);
-      stopTyping();
+
+    // TTL - stop after 2 minutes max to prevent zombie indicators
+    activityTtlTimer = setTimeout(() => {
+      log?.info(`[arp] Activity TTL reached (2m), stopping indicator`);
+      stopActivity();
     }, TYPING_TTL_MS);
-    
-    log?.debug(`[arp] Started typing indicator for channel ${channelId}`);
+
+    log?.debug(`[arp] Started activity (${currentActivity}) for channel ${channelId}`);
   };
 
-  const stopTyping = () => {
-    if (!typingActive) return;
-    typingActive = false;
-    
-    if (typingInterval) {
-      clearInterval(typingInterval);
-      typingInterval = undefined;
+  /** Transition from thinking → typing on first streamed chunk. Only fires once. */
+  let hasUpgradedToTyping = false;
+  const upgradeToTyping = () => {
+    if (hasUpgradedToTyping || !activityActive || !gateway) return;
+    hasUpgradedToTyping = true;
+    currentActivity = 'typing';
+    // Immediately send the new activity so the UI updates without waiting for next interval
+    gateway.sendActivity(channelId, 'start', 'typing');
+    log?.debug(`[arp] Upgraded activity to typing for channel ${channelId}`);
+  };
+
+  const stopActivity = () => {
+    if (!activityActive) return;
+    activityActive = false;
+
+    if (activityInterval) {
+      clearInterval(activityInterval);
+      activityInterval = undefined;
     }
-    if (typingTtlTimer) {
-      clearTimeout(typingTtlTimer);
-      typingTtlTimer = undefined;
+    if (activityTtlTimer) {
+      clearTimeout(activityTtlTimer);
+      activityTtlTimer = undefined;
     }
-    
+
+    // Send idle to clear any lingering indicator (safety net — relay also clears on message POST)
     if (gateway) {
-      gateway.sendTyping(channelId, 'stop');
+      gateway.sendActivity(channelId, 'start', 'idle');
     }
-    log?.debug(`[arp] Stopped typing indicator for channel ${channelId}`);
+    log?.debug(`[arp] Stopped activity for channel ${channelId}`);
   };
 
-  // Start typing immediately when we begin processing
-  startTyping();
+  // Begin with "thinking" — agent is evaluating the message
+  startActivity('thinking');
 
   // Resolve agent route (session key + agent binding)
   const route = core.channel.routing.resolveAgentRoute({
@@ -445,8 +460,9 @@ async function handleARPInbound(params: {
           const text = payload.text ?? '';
           if (!text.trim()) return;
 
-          // Stop typing before sending response
-          stopTyping();
+          // First streamed chunk: transition from thinking → typing
+          upgradeToTyping();
+          // Don't stop activity here — the relay auto-clears to idle on successful message POST
 
           await sendToARP(
             account,
@@ -460,14 +476,14 @@ async function handleARPInbound(params: {
           );
         },
         onError: (err: unknown, info: { kind: string }) => {
-          stopTyping();
+          stopActivity();
           log?.error(`[arp] ${info.kind} reply failed: ${String(err)}`);
         },
       },
     });
   } finally {
-    // Ensure typing is always stopped, even on unexpected exit
-    stopTyping();
+    // Safety net: ensure activity is cleared even on unexpected exit
+    stopActivity();
   }
 
   log?.info(`[arp] Processed ${message.type} for channel ${channelId}`);

@@ -222,9 +222,29 @@ export class ARPGateway {
   }
 
   /**
-   * Send a typing indicator to the ARP relay
-   * Server expects: type="activity_start"|"activity_stop", channelId, activity="typing"
+   * Send an activity indicator to the ARP relay.
+   * Supported activities: thinking, typing, coding, reviewing, waiting_io, idle.
+   * Server expects: type="activity_start"|"activity_stop", channelId, activity=string
    */
+  sendActivity(channelId: string, action: 'start' | 'stop', activity: string = 'typing'): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      const msgType = action === 'start' ? 'activity_start' : 'activity_stop';
+      this.ws.send(JSON.stringify({
+        type: msgType,
+        channelId,
+        activity,
+      }));
+      this.logger.debug(`[arp] Sent ${msgType} (${activity}) for channel ${channelId}`);
+    }
+  }
+
+  /**
+   * Send a typing indicator (backwards-compat wrapper around sendActivity).
+   */
+  sendTyping(channelId: string, action: 'start' | 'stop'): void {
+    this.sendActivity(channelId, action, 'typing');
+  }
+
   /**
    * Handle summary_request: generate a context summary and respond via WebSocket.
    * Uses channel memory + recent messages to build a seed prompt for forking.
@@ -287,15 +307,4 @@ export class ARPGateway {
     }
   }
 
-  sendTyping(channelId: string, action: 'start' | 'stop'): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      const msgType = action === 'start' ? 'activity_start' : 'activity_stop';
-      this.ws.send(JSON.stringify({
-        type: msgType,
-        channelId,
-        activity: 'typing',
-      }));
-      this.logger.debug(`[arp] Sent ${msgType} (typing) for channel ${channelId}`);
-    }
-  }
 }
