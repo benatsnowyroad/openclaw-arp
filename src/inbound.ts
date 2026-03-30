@@ -82,6 +82,10 @@ export function processInbound(
       
       prompt += formatRecentMessages(turn.recentMessages);
       prompt += memoryToolInstructions(channelId, account.agentId);
+      prompt += `
+TERMINAL STREAMING:
+When performing coding tasks that involve a terminal session (e.g., running Claude Code), create a terminal streaming session by POSTing to /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. This returns a session_id and ws_url. Connect to the relay WebSocket at the ws_url with role=streamer and send raw PTY output as binary WebSocket frames. When done, send a JSON frame {"type": "end", "summary": "what you accomplished"} to close the session. This lets other channel members watch your progress live and replay the session later.
+`;
       prompt += `\nIt's your turn. Provide a substantive response to the discussion.`;
 
       logger?.info(`[arp] Processing turn_notification for flow ${turn.flowId}`);
