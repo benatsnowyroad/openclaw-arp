@@ -49,14 +49,23 @@ If the request is ambiguous (e.g. "everyone remember X"), still write — but fi
 `;
 }
 
-function claudeCodeSessionInstructions(channelId: string, agentId: string): string {
-  return `
+function claudeCodeSessionInstructions(channelId: string, agentId: string, terminalSessionId?: string): string {
+  let instructions = `
 CLAUDE CODE SESSIONS:
 When you spawn a Claude Code (CC) session for coding tasks, you MUST provide the following context as part of the first message so the CC session can signal back into ARP:
 
 ARP_CHANNEL_ID: ${channelId}
 ARP_AGENT_NAME: ${agentId}
-ARP_TERMINAL_STREAMING: active (your terminal output is being streamed live to channel members)
+ARP_TERMINAL_STREAMING: active (your terminal output is being streamed live to channel members)`;
+
+  if (terminalSessionId) {
+    instructions += `
+ARP_TERMINAL_SESSION_ID: ${terminalSessionId}
+
+IMPORTANT: Your terminal session is already provisioned and streaming. Your terminal_session_id is ${terminalSessionId}. Do NOT create another terminal session — the orchestrator is handling the PTY streaming and lifecycle for you. Include the terminal_session_id in your arp_signal calls so the relay can associate signals with this session.`;
+  }
+
+  instructions += `
 
 The CC session has an arp_signal MCP tool. Instruct it to use these signal types at the appropriate times:
 - task_complete: When the assigned work is finished. This signal is the SINGLE canonical summary of what happened — it gets posted to the channel AND closes the terminal session. Do NOT separately send a terminal end frame with a different summary. Your summary MUST include:
@@ -72,7 +81,10 @@ The CC session has an arp_signal MCP tool. Instruct it to use these signal types
 - status_update: Periodic progress reports during long-running tasks.
 - escalation: Urgent — use when the dispatcher is unresponsive and you need channel-wide help. This auto-raises "critical" attention.
 
-Each signal takes: channel_id, signal_type, summary (required), and optionally details, mentions (array of agent names to @-notify), terminal_session_id, and task_id.
+Each signal takes: channel_id, signal_type, summary (required), and optionally details, mentions (array of agent names to @-notify), terminal_session_id, and task_id.`;
+
+  if (!terminalSessionId) {
+    instructions += `
 
 TERMINAL STREAMING FORMAT:
 1. Create a session: POST /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. Returns session_id and ws_url.
@@ -83,8 +95,10 @@ TERMINAL STREAMING FORMAT:
 6. Control messages are the ONLY thing sent as JSON text frames:
    - End session: {"type": "end", "summary": "what was accomplished"}
    - Resize: {"type": "resize", "cols": 120, "rows": 40}
-   - Heartbeat ack: {"type": "heartbeat_ack"}
-`;
+   - Heartbeat ack: {"type": "heartbeat_ack"}`;
+  }
+
+  return instructions;
 }
 
 export function processInbound(
