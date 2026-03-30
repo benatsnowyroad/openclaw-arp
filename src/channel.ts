@@ -273,24 +273,22 @@ async function handleARPInbound(params: {
   const senderId = context.metadata.senderId ?? 'arp-system';
 
   // --- Activity indicator lifecycle ---
-  // Two-phase: "thinking" on receipt → "typing" on first streamed chunk → relay auto-clears on POST
+  // Continuous "thinking" from receipt until relay clears on message POST. Continuity > granularity.
   let activityInterval: NodeJS.Timeout | undefined;
   let activityTtlTimer: NodeJS.Timeout | undefined;
   let activityActive = false;
-  let currentActivity: string = 'thinking';
 
   const startActivity = (activity: string) => {
     if (activityActive || !gateway) return;
     activityActive = true;
-    currentActivity = activity;
 
     // Send initial activity indicator
-    gateway.sendActivity(channelId, 'start', currentActivity);
+    gateway.sendActivity(channelId, 'start', activity);
 
     // Refresh activity every 5 seconds (server-side TTL requires periodic pings)
     activityInterval = setInterval(() => {
       if (activityActive && gateway) {
-        gateway.sendActivity(channelId, 'start', currentActivity);
+        gateway.sendActivity(channelId, 'start', activity);
       }
     }, TYPING_INTERVAL_MS);
 
@@ -300,18 +298,7 @@ async function handleARPInbound(params: {
       stopActivity();
     }, TYPING_TTL_MS);
 
-    log?.debug(`[arp] Started activity (${currentActivity}) for channel ${channelId}`);
-  };
-
-  /** Transition from thinking → typing on first streamed chunk. Only fires once. */
-  let hasUpgradedToTyping = false;
-  const upgradeToTyping = () => {
-    if (hasUpgradedToTyping || !activityActive || !gateway) return;
-    hasUpgradedToTyping = true;
-    currentActivity = 'typing';
-    // Immediately send the new activity so the UI updates without waiting for next interval
-    gateway.sendActivity(channelId, 'start', 'typing');
-    log?.debug(`[arp] Upgraded activity to typing for channel ${channelId}`);
+    log?.debug(`[arp] Started activity (${activity}) for channel ${channelId}`);
   };
 
   const stopActivity = () => {
@@ -460,9 +447,8 @@ async function handleARPInbound(params: {
           const text = payload.text ?? '';
           if (!text.trim()) return;
 
-          // First streamed chunk: transition from thinking → typing
-          upgradeToTyping();
           // Don't stop activity here — the relay auto-clears to idle on successful message POST
+          // We stay in "thinking" continuously until the message lands. Continuity > granularity.
 
           await sendToARP(
             account,
