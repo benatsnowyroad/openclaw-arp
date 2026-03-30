@@ -327,9 +327,9 @@ async function handleARPInbound(params: {
       activityTtlTimer = undefined;
     }
 
-    // Send idle to clear any lingering indicator (safety net — relay also clears on message POST)
+    // Send activity_stop to clear any lingering indicator (safety net — relay also clears on message POST)
     if (gateway) {
-      gateway.sendActivity(channelId, 'start', 'idle');
+      gateway.sendActivity(channelId, 'stop');
     }
     log?.debug(`[arp] Stopped activity for channel ${channelId}`);
   };
