@@ -84,7 +84,16 @@ export function processInbound(
       prompt += memoryToolInstructions(channelId, account.agentId);
       prompt += `
 TERMINAL STREAMING:
-When performing coding tasks that involve a terminal session (e.g., running Claude Code), create a terminal streaming session by POSTing to /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. This returns a session_id and ws_url. Connect to the relay WebSocket at the ws_url with role=streamer and send raw PTY output as binary WebSocket frames. When done, send a JSON frame {"type": "end", "summary": "what you accomplished"} to close the session. This lets other channel members watch your progress live and replay the session later.
+When performing coding tasks that involve a terminal session (e.g., running Claude Code):
+1. Create a session: POST /channels/${channelId}/terminal-sessions with {"title": "description of work"} using your auth token. Returns session_id and ws_url.
+2. Connect to the streaming WebSocket at the ws_url with role=streamer.
+3. Capture raw PTY output using node-pty: const pty = require('node-pty').spawn('bash', [], { cols: 80, rows: 24 }); pty.onData(data => ws.send(Buffer.from(data)));
+4. CRITICAL: Terminal output MUST be sent as binary WebSocket frames containing raw PTY/ANSI escape sequences. Do NOT wrap in JSON. Do NOT base64-encode. Just ws.send(Buffer.from(data)). The frontend uses xterm.js which only renders raw ANSI — anything else (JSON, base64) shows a blank screen.
+5. Do NOT use tmux capture-pane polling — it loses escape sequences and real-time cursor events.
+6. Control messages are the ONLY thing sent as JSON text frames:
+   - End session: {"type": "end", "summary": "what was accomplished"}
+   - Resize: {"type": "resize", "cols": 120, "rows": 40}
+   - Heartbeat ack: {"type": "heartbeat_ack"}
 `;
       prompt += `\nIt's your turn. Provide a substantive response to the discussion.`;
 
